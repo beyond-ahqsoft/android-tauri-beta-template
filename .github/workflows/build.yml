@@ -182,19 +182,19 @@ jobs:
         id: sign_app
         if: env.SIGN_APP == true
         with:
-          releaseDirectory: /home/runner/work/android-tauri-beta-template/android-tauri-beta-template/src-tauri/gen/android/app/build/outputs/apk/universal/release
+          releaseDirectory: ./src-tauri/gen/android/app/build/outputs/apk/universal/release
           signingKeyBase64: ${{ secrets.KEY_FILE }}
           alias: ahqstore
           keyStorePassword: ${{ secrets.K_PASSWORD }}
           keyPassword: ${{ secrets.K_PASSWORD }}
         env:
-          ANDROID_HOME: /home/runner/work/android-tauri-beta-template/android-tauri-beta-template/sdk
+          ANDROID_HOME: ./sdk
           BUILD_TOOLS_VERSION: 35.0.0-rc4
 
       - name: As Artifact
         uses: actions/upload-artifact@v4
         with:
-          path: /home/runner/work/android-tauri-beta-template/android-tauri-beta-template/src-tauri/gen/android/app/build/outputs/apk/universal/release/*
+          path: ./src-tauri/gen/android/app/build/outputs/apk/universal/release/*
 
       - name: Upload to Release
         uses: ahqsoftwares/upload-release-asset@v22
