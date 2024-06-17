@@ -197,15 +197,12 @@ jobs:
           path: ./src-tauri/gen/android/app/build/outputs/apk/universal/release/*
 
       - name: Upload to Release
-        uses: ahqsoftwares/upload-release-asset@v23
+        uses: AButler/upload-release-assets@v3.0
         if: env.SIGN_APP == true
         with:
-          id: ${{ needs.create-release.outputs.release_id }}
-          asset_path: ${{ steps.sign_app.outputs.signedReleaseFile }}
-          asset_name: app.apk
-          asset_content_type: application/vnd.android.package-archive
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          release-id: ${{ needs.create-release.outputs.release_id }}
+          files: ${{ steps.sign_app.outputs.signedReleaseFile }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
   undraft-release:
     needs: [create-release, publish-android]
