@@ -198,6 +198,7 @@ jobs:
 
       - name: Upload to Release
         uses: ahqsoftwares/upload-release-asset@v22
+        if: env.SIGN_APP == true
         with:
           id: ${{ needs.create-release.outputs.release_id }}
           asset_path: ${{ steps.sign_app.outputs.signedReleaseFile }}
