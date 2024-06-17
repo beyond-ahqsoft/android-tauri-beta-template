@@ -1,0 +1,227 @@
+name: "Build & Publish App, Service, Scripts"
+on:
+  push:
+  workflow_dispatch:
+
+permissions: write-all
+
+env:
+  NAME: Application
+  SIGN_APP: false
+
+jobs:
+  create-release:
+    name: Create a new github release
+
+    permissions:
+      contents: write
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      upload_url: ${{ steps.get-u-url.outputs.result }}
+      release_id: ${{ steps.get-id.outputs.result }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Create Release
+        id: create-release
+        uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ github.ref_name }}
+          NAME: ${{ env.NAME }}
+        with:
+          script: |
+            const fs = require("fs");
+            const version = require('./package.json').version;
+
+            const alpha = process.env.BRANCH != "release";
+            const alphaId = Date.now();
+
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: !alpha ? version : `alpha-${alphaId}`,
+              name: alpha ? `${process.env.NAME} Alpha v${version}-next-${alphaId}` : `${process.env.NAME} v${version}`,
+              body: String(fs.readFileSync("./latest.md")),
+              draft: true,
+              prerelease: alpha
+            });
+            return data
+
+      - name: Get Release Id
+        id: get-id
+        uses: actions/github-script@v7
+        env:
+          data: ${{ steps.create-release.outputs.result }}
+        with:
+          result-encoding: string
+          script: |
+            let data = process.env.data;
+
+            try {
+              data = JSON.parse(data);
+
+              return data.id;
+            } catch (_) {
+              console.log(data.id);
+              return data.id;
+            }
+
+      - name: Get Upload Url
+        id: get-u-url
+        uses: actions/github-script@v7
+        env:
+          data: ${{ steps.create-release.outputs.result }}
+        with:
+          result-encoding: string
+          script: |
+            let data = process.env.data;
+
+            try {
+              data = JSON.parse(data);
+
+              return data.upload_url;
+            } catch (_) {
+              return data.upload_url;
+            }
+
+  publish-android:
+    needs: create-release
+    name: Buld & Publish Tauri Android App
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Android Requirements
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install libc6:i386 libncurses5:i386 libstdc++6:i386 lib32z1 libbz2-1.0:i386
+
+      - name: Download & Install Android Build Things
+        run: |
+          sudo curl -L -o ./jbr.tar.gz https://cache-redirector.jetbrains.com/intellij-jbr/jbr_jcef-17.0.11-linux-x64-b1207.24.tar.gz
+          sudo mkdir jbr
+          sudo tar -xvf ./jbr.tar.gz -C ./jbr
+          sudo chmod 777 -R ./jbr
+
+          sudo curl -L -o ./sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          sudo unzip ./sdk.zip -d ./sdk
+          sudo mkdir ./sdk/cmdline-tools-test
+          sudo mv ./sdk/cmdline-tools/* ./sdk/cmdline-tools-test
+          sudo mkdir ./sdk/cmdline-tools/latest
+          sudo mv ./sdk/cmdline-tools-test/* ./sdk/cmdline-tools/latest
+          sudo rm -rf ./sdk/cmdline-tools-test
+          sudo chmod 777 -R ./sdk
+
+          export JAVA_HOME="./jbr/jbr_jcef-17.0.11-linux-x64-b1207.24"
+          export ANDROID_HOME="./sdk"
+
+          export PATH=$PATH:$ANDROID_HOME/cmdline-tools/latest/bin
+
+          echo y | sdkmanager "platform-tools"
+          echo y | sdkmanager "platforms;android-34"
+          echo y | sdkmanager "ndk;27.0.11902837"
+          echo y | sdkmanager "build-tools;35.0.0-rc4"
+
+          export NDK_HOME="$ANDROID_HOME/ndk/27.0.11902837"
+
+      - name: Install Tauri Requirements
+        run: |
+          sudo apt update
+          sudo apt install libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        run: npm i -g pnpm
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust Targets
+        run: rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
+
+      - name: Build Tauri App (Android)
+        run: |
+          export CURRENT_DIR=$(pwd)
+          export ANDROID_HOME="$CURRENT_DIR/sdk/"
+          export ANDROID_SDK_ROOT="$CURRENT_DIR/sdk/"
+          export NDK_HOME="$CURRENT_DIR/sdk/ndk/27.0.11902837/"
+          export JAVA_HOME="$CURRENT_DIR/jbr/jbr_jcef-17.0.11-linux-x64-b1207.24/"
+
+          sudo chmod 777 -R ./src-tauri
+
+          pnpm install
+          pnpm tauri android build
+
+      - uses: r0adkll/sign-android-release@master
+        name: Sign app APK
+        id: sign_app
+        if: env.SIGN_APP == true
+        with:
+          releaseDirectory: /home/runner/work/android-tauri-beta-template/android-tauri-beta-template/src-tauri/gen/android/app/build/outputs/apk/universal/release
+          signingKeyBase64: ${{ secrets.KEY_FILE }}
+          alias: ahqstore
+          keyStorePassword: ${{ secrets.K_PASSWORD }}
+          keyPassword: ${{ secrets.K_PASSWORD }}
+        env:
+          ANDROID_HOME: /home/runner/work/android-tauri-beta-template/android-tauri-beta-template/sdk
+          BUILD_TOOLS_VERSION: 35.0.0-rc4
+
+      - name: As Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: /home/runner/work/android-tauri-beta-template/android-tauri-beta-template/src-tauri/gen/android/app/build/outputs/apk/universal/release/*
+
+      - name: Upload to Release
+        uses: ahqsoftwares/upload-release-asset@v22
+        with:
+          id: ${{ needs.create-release.outputs.release_id }}
+          asset_path: ${{ steps.sign_app.outputs.signedReleaseFile }}
+          asset_name: app.apk
+          asset_content_type: application/vnd.android.package-archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  undraft-release:
+    needs: [create-release, publish-android]
+    name: Publish Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Undraft Release
+        uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ github.ref_name }}
+          R_ID: ${{ needs.create-release.outputs.release_id }}
+        with:
+          script: |
+            github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: process.env.R_ID,
+              draft: false
+            });
